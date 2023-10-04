@@ -1,0 +1,20 @@
+Package: RandMVLearn
+Type: Package
+Title: Randomized Nonlinear Association and Prediction Methods for Multi-view Learning with Feature Selection
+Version: 0.1.0
+Author: Sandra E. Safo (ssafo@umn.edu) and Leif Verace (verac008@umn.edu)
+Maintainer: Sandra Safo <ssafo@umn.edu>
+Url: https://github.com/lasandrall/RandMVLearn
+Description: We present scalable randomized kernel methods for jointly associating data from multiple sources and 
+             simultaneously predicting an outcome or classifying a unit into one of two or more classes. 
+             The proposed methods model nonlinear relationships in multiview data together with predicting 
+             a clinical outcome and are capable of identifying variables or groups of variables that best 
+             contribute to the relationships among the views. We use the idea that random Fourier bases 
+             can approximate shift-invariant kernel functions to construct nonlinear mappings of each view 
+             and we use these mappings and the outcome variable to learn view-independent 
+             low-dimensional representations. 
+Imports: reticulate, doParallel
+License: GPL (>=2.0)
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.2.3

@@ -592,7 +592,7 @@ def AcceProgGradFistaBacktrack(X,gamma,G,U,myB,num_features,myepsilon,max_iter,u
 
 #main algorithm for nonlinear joint association and prediction
 #July 15, 2022
-def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outcometype='continuous',kernel_param=[],mylambda=[], max_iter_nsir=500, max_iter_PG=500, update_thresh_nsir=10^-6,update_thresh_PG=10^-6,standardize_Y=False,standardize_X=False):
+def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outcometype='continuous',kernel_param=[],mylambda=[], max_iter_nsir=500, max_iter_PG=500, update_thresh_nsir=10**-6,update_thresh_PG=10**-6,standardize_Y=False,standardize_X=False):
   torch.manual_seed(seed=myseed)
 
   if not isinstance(Xdata,list):

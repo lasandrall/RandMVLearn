@@ -16,6 +16,6 @@ This package depends on the following Python modules:
 
 Please ensure these modules are downloaded and available for use.
 
-Paper can be found here: https://arxiv.org/abs/2304.04692. 
+Paper can be found here: https://pubmed.ncbi.nlm.nih.gov/39973130/ or old version (https://arxiv.org/abs/2304.04692). 
 
 Send an email to ssafo@umn.edu if you have any questions or notice a bug. Thanks!

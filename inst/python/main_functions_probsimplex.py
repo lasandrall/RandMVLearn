@@ -10,6 +10,8 @@ import matplotlib
 from torch.autograd import Variable
 from joblib import Parallel, delayed
 import itertools
+import sklearn
+#Written by Sandra E Safo
 torch.manual_seed(12345)
 # Set default tensor type
 torch.set_default_tensor_type(torch.DoubleTensor)
@@ -56,20 +58,21 @@ def indicator_matrix(Y):
   return indvector.scatter_(1,Y.type(torch.LongTensor),1) #set columns as one if row i has class j (j columns)
 
 
-def myObjective(Z,Y,G,beta,U,myoptscore,lambda_d,M,outcometype,gamma,groups,grpweights,myrho,myeta):
+def myObjective(Z,Y,G,beta,U,myoptscore,lambda_d,M,outcometype,gamma,groups,grpweights,myrho,myeta,myomegaweight):
   #assumes Y comes in as 0,1,...
   n,p=Y.size()
   n,k=G.size()
   nc=len(torch.unique(Y))
   res1=0
-  if outcometype=='binary':
+  #myomegaweight=1
+  if outcometype=='categorical':
     if nc==2:
 
         Yind=indicator_matrix(Y)
         myoptscore=torch.tensor([torch.sqrt(torch.sum(Yind[:,1])/torch.sum(Yind[:,0])),-torch.sqrt(torch.sum(Yind[:,0])/torch.sum(Yind[:,1]))])
 
         Ytilde=torch.matmul(Yind.type(torch.DoubleTensor), torch.unsqueeze(myoptscore,dim=1))
-        res1 += (0.5/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
+        res1 += (0.5*myomegaweight/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
     elif nc >2: #technically works with n>=2
         #print(nc)
         H=torch.zeros(nc, nc-1)
@@ -91,17 +94,19 @@ def myObjective(Z,Y,G,beta,U,myoptscore,lambda_d,M,outcometype,gamma,groups,grpw
         q,r=torch.linalg.qr(H)
         H=q
         Ytilde=torch.matmul(Yind.type(torch.DoubleTensor), H)
-        res1 += (0.5/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
+        res1 += (0.5*myomegaweighta/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
   elif outcometype=='continuous':
-    res1 += (0.5/n)*torch.norm(Y - torch.matmul(G, beta), 'fro')**2
+    res1 += (0.5*myomegaweight/n)*torch.norm(Y - torch.matmul(G, beta), 'fro')**2
 
 
   res2=0
   gpLY=0
   nG=len(groups)
   for d in range(M):
+   # myomegaweight=0
+    #M=1
     Ud=U[d]
-    res2 += (0.5/n)*torch.norm(G - torch.matmul(Z[d], Ud), 'fro')**2 + (0.5)*lambda_d[d]*torch.norm(Ud, 'fro')**2
+    res2 += ((0.5*(1-myomegaweight))/(n*M))*torch.norm(G - torch.matmul(Z[d], Ud), 'fro')**2 + (0.5/M)*lambda_d[d]*torch.norm(Ud, 'fro')**2
     mysum=0
     grpweightsd=grpweights[d]
     groupsd=groups[d]
@@ -113,21 +118,24 @@ def myObjective(Z,Y,G,beta,U,myoptscore,lambda_d,M,outcometype,gamma,groups,grpw
   res=res1 + res2 + gpLY
   return res
 
-def myloss(Z,Y,G,beta,U,myoptscore,lambda_d,M,outcometype):
+
+
+def myloss(Z,Y,G,beta,U,myoptscore,lambda_d,M,outcometype,myomegaweight):
   #assumes Y comes in as 0,1,...
   n,p=Y.size()
   n,k=G.size()
   nc=len(torch.unique(Y))
   #print('nc is',nc)
   res1=0
-  if outcometype=='binary':
+  #myomegaweight=1
+  if outcometype=='categorical':
     if nc==2:
 
         Yind=indicator_matrix(Y)
         myoptscore=torch.tensor([torch.sqrt(torch.sum(Yind[:,1])/torch.sum(Yind[:,0])),-torch.sqrt(torch.sum(Yind[:,0])/torch.sum(Yind[:,1]))])
 
         Ytilde=torch.matmul(Yind.type(torch.DoubleTensor), torch.unsqueeze(myoptscore,dim=1))
-        res1 += (0.5/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
+        res1 += (0.5*myomegaweight/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
     elif nc >2: #technically works with n>=2
         H=torch.zeros(nc, nc-1)
         Yind=indicator_matrix(Y)
@@ -148,21 +156,23 @@ def myloss(Z,Y,G,beta,U,myoptscore,lambda_d,M,outcometype):
         q,r=torch.linalg.qr(H)
         H=q
         Ytilde=torch.matmul(Yind.type(torch.DoubleTensor), H)
-        res1 += (0.5/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
+        res1 += (0.5*myomegaweight/n)*torch.norm(Ytilde - torch.matmul(G, beta), 'fro')**2
   elif outcometype=='continuous':
 
-    res1 += (0.5/n)*torch.norm(Y - torch.matmul(G, beta), 'fro')**2
+    res1 += (0.5*myomegaweight/n)*torch.norm(Y - torch.matmul(G, beta), 'fro')**2
     secondterm=torch.matmul(G, beta)
 
   res2=0
   for d in range(M):
+    #myomegaweight=0
     Ud=U[d]
-    res2 += (0.5/n)*torch.norm(G - torch.matmul(Z[d], Ud), 'fro')**2 + (0.5)*lambda_d[d]*torch.norm(Ud, 'fro')**2
-
+    res2 += ((0.5*(1-myomegaweight))/(n*M))*torch.norm(G - torch.matmul(Z[d], Ud), 'fro')**2 + (0.5/M)*lambda_d[d]*torch.norm(Ud, 'fro')**2
 
   res=res1 + res2
 
   return res
+
+
 
 
 def random_features_sparsity(Xdata,num_features,gamma,kernel_param):
@@ -173,9 +183,9 @@ def random_features_sparsity(Xdata,num_features,gamma,kernel_param):
   myB=list(range(M))
   myepsilon=list(range(M))
   myomega=list(range(M))
-  torch.manual_seed(12345)
+  #torch.manual_seed(12345)
   for d in range(M):
-
+    torch.manual_seed(12345)
     nRows,nVars=Xdata[d].size()
     mygamma=torch.matmul(gamma[d],torch.ones(1,num_features) )  #repeat gamma # of random features times
     myepsilon[d]=torch.randn(nVars,num_features) #simulate epsilon with mean 0 and 1, bandwith used in gamma
@@ -185,7 +195,8 @@ def random_features_sparsity(Xdata,num_features,gamma,kernel_param):
     myb[d]=2*mypi*torch.rand(1,num_features) #uniform [0, 2pi]
 
     myB[d]=torch.matmul(torch.ones(nRows,1),myb[d]) #repeat myb nrow times
-
+    
+    #myrandfeatures=torch.Tensor([math.sqrt(2)])*torch.cos(torch.matmul(Xdata[d],myomega[d]) + myB[d])
     myrandfeatures=torch.cos(torch.matmul(Xdata[d],myomega[d]) + myB[d])
     Z[d]=myrandfeatures
 
@@ -198,11 +209,16 @@ def random_features_sparsity(Xdata,num_features,gamma,kernel_param):
         'myB': myB
     }
 
-def solve_OptScore_theta(Y,G,theta,myoptscore):
+
+def solve_OptScore_theta(Y,G,theta,myoptscore,myomegaweight):
+  #myomegaweight=0.5  
   nc=len(torch.unique(Y))
-  #assumes Y is 0,1 for binary
+  #assumes Y is 0,1 for categorical
+  n,_=G.size()
   if nc==2:
-    Yind=indicator_matrix(Y)
+    myscalar=(math.sqrt(myomegaweight)/math.sqrt(n))
+    #myscalar=1
+    Yind=myscalar*indicator_matrix(Y)
     myoptscore=torch.tensor([torch.sqrt(torch.sum(Yind[:,1])/torch.sum(Yind[:,0])),-torch.sqrt(torch.sum(Yind[:,0])/torch.sum(Yind[:,1]))])
 
     Ytilde=torch.matmul(Yind.type(torch.DoubleTensor), torch.unsqueeze(myoptscore,dim=1))
@@ -210,16 +226,17 @@ def solve_OptScore_theta(Y,G,theta,myoptscore):
     #check conditions
     Zones=torch.matmul(Yind.type(torch.DoubleTensor),torch.ones(nc,1))
 
-    GtY=torch.matmul(torch.t(G),Ytilde) #G'*Y
-    myinv=torch.inverse(torch.matmul(torch.t(G),G))
+    GtY=torch.matmul(myscalar*torch.t(G),Ytilde) #G'*Y
+    myinv=torch.inverse(torch.matmul(myscalar*torch.t(G),myscalar*G))
     #solution for beta
     thetahat=torch.matmul(myinv,GtY)
   elif nc>2:
     #solve for thetahat
     #need to solve for optimal score
     #use that to solve for theta
+    myscalar=(math.sqrt(myomegaweight)/math.sqrt(n))
     H=torch.zeros(nc, nc-1)
-    Yind=indicator_matrix(Y)
+    Yind=myscalar*indicator_matrix(Y)
     n,_=G.size()
     for l in range(nc-1):
         if l==0:
@@ -243,9 +260,10 @@ def solve_OptScore_theta(Y,G,theta,myoptscore):
 
     q,r=torch.linalg.qr(H)
     H=q
+    #myscalar=1
     Ytilde=torch.matmul(Yind.type(torch.DoubleTensor), H)
-    GtY=torch.matmul(torch.t(G),Ytilde) #G'*Y
-    myinv=torch.inverse(torch.matmul(torch.t(G),G))
+    GtY=torch.matmul(myscalar*torch.t(G),Ytilde) #G'*Y
+    myinv=torch.inverse(torch.matmul(myscalar*torch.t(G),myscalar*G))
     #solution for beta
     thetahat=torch.matmul(myinv,GtY)
     myoptscore=H
@@ -254,24 +272,27 @@ def solve_OptScore_theta(Y,G,theta,myoptscore):
           'OptScore':myoptscore
          }
 
-
-def solve_theta_continuos(Y,G):
-    GtY=torch.matmul(torch.t(G),Y)  #G'*Y
-    myinv=torch.inverse(torch.matmul(torch.t(G),G))
+def solve_theta_continuos(Y,G,myomegaweight):
+    n,_=G.size()
+    myscalar=(math.sqrt(myomegaweight)/math.sqrt(n))
+    GtY=torch.matmul(myscalar*torch.t(G),myscalar*Y)  #G'*Y
+    myinv=torch.inverse(torch.matmul(myscalar*torch.t(G),myscalar*G))
     thetahat=torch.matmul(myinv,GtY)
     return thetahat
 
+
 #Z is a list of rand features for each data view
 # solve for individual loadings. output as a list
-def solve_ind_loads(G, Z,mylambda,num_features):
+def solve_ind_loads(G, Z,mylambda,num_features,myomegaweight):
     #check dimension of G
     nRows,r=G.size()
     M=len(Z)
     U=list(range(M))
-    tildeG=torch.cat(((1/math.sqrt(nRows))*G, torch.zeros([num_features,r]))) # row concatenation
+    myscalar=(math.sqrt(1-myomegaweight)/math.sqrt(nRows*M))
+    tildeG=torch.cat((myscalar*G, torch.zeros([num_features,r]))) # row concatenation
     for d in range(M):
         Zd=Z[d]
-        tildeZd=torch.cat( ( (1/math.sqrt(nRows))*Zd,  torch.eye(num_features)*torch.sqrt(torch.tensor(mylambda[d]))))
+        tildeZd=torch.cat( ( myscalar*Zd,  torch.eye(num_features)*torch.sqrt(torch.tensor(mylambda[d])/M)))
         ZtG=torch.matmul(torch.t(tildeZd),tildeG)
         #call function for inverse
         ZdtZd=torch.matmul(torch.t(Zd),Zd)
@@ -287,24 +308,26 @@ def solve_ind_loads(G, Z,mylambda,num_features):
             U[d]=Ud
     return U
 
-def solve_joint(Y,mytheta,Z,A,myOmega,M,outcometype,lambda_d,ncomponents):
+
+def solve_joint(Y,mytheta,Z,A,myOmega,M,outcometype,lambda_d,ncomponents,myomegaweight):
     #myOmega is K by K-1 matrix
       U=A
-
+      n,_=Y.size()
+      myscalar=(math.sqrt(1-myomegaweight)/math.sqrt(n*M))
+      myscalar1=(math.sqrt(myomegaweight)/math.sqrt(n))
       if outcometype=='continuous':
         n,_=Y.size()
         #n=1
         #form tildeY, Y is n x 1 (for single continous outome) or n by q
         M=len(Z)
         r=U[0].size(1) #number of columns
-        ZU=[torch.matmul((1/torch.sqrt(torch.tensor(n)))*Z[d],U[d]) for d in range(M)   ]
-        tildeY=torch.cat((Y, torch.cat(ZU,1) ),1    )
+        ZU=[torch.matmul(myscalar*Z[d],U[d]) for d in range(M)   ]
+        tildeY=torch.cat((myscalar1*Y, torch.cat(ZU,1) ),1    )
         tilde_theta=torch.cat(  (mytheta, torch.cat(M*[torch.eye(r)],1) ),1 )
         YBt=(1/2)*torch.matmul(tildeY,torch.t(tilde_theta))
         Ghat2=mysvdt(YBt)
-        #Ghat=Ghat2[0]
         Ghat=Ghat2
-      elif outcometype=='binary':
+      elif outcometype=='categorical':
         n,_=Y.size()
         #n=1
         Yind=indicator_matrix(Y)
@@ -314,20 +337,22 @@ def solve_joint(Y,mytheta,Z,A,myOmega,M,outcometype,lambda_d,ncomponents):
         YOmega=torch.matmul(Yind.type(torch.DoubleTensor), myOmega2) #NxK times K by K-1
         M=len(Z)
         r=U[0].size(1) #number of columns
-        ZU=[torch.matmul((1/torch.sqrt(torch.tensor(n)))*Z[d],U[d]) for d in range(M)   ]
+        ZU=[torch.matmul(myscalar*Z[d],U[d]) for d in range(M)   ]
 
         nvars,ncols=YOmega.size()
-        tildeY=torch.cat((YOmega, torch.cat(ZU,1) ),1    )
+        tildeY=torch.cat((myscalar1*YOmega, torch.cat(ZU,1) ),1    )
         tilde_theta=torch.cat(  (mytheta, torch.cat(M*[torch.eye(r)],1) ),1 )
         YBt=(1/2)*torch.matmul(tildeY,torch.t(tilde_theta))
+        #print(YBt)
         Ghat2=mysvdt(YBt)
-        #Ghat=Ghat2[0]
         Ghat=Ghat2
 
       return Ghat
 
+
+
 #only solves of G in prediction
-def solve_joint_predict2(Y,beta,Z,U,M,outcometype,ncomponents):
+def solve_joint_predict2Old(Y,beta,Z,U,M,outcometype,ncomponents):
 
 #if outcometype=='continuous':
   n,_=Y.size()
@@ -346,46 +371,52 @@ def solve_joint_predict2(Y,beta,Z,U,M,outcometype,ncomponents):
 
   return Ghat
 
-
-def gamma_loss(gamma_temp, Xdata,myB,myepsilon, G,U,num_features):
+def gamma_loss(gamma_temp, Xdata,myB,myepsilon, G,U,num_features,myomegaweight,M):
     #n,num_features=myB.size()
     #U is M by 1
     n,k=G.size()
     nrows,ncols=gamma_temp.size()
+    myscalar=((1-myomegaweight)/(n*M))
     if nrows==1:
       gamma_temp=torch.t(gamma_temp)
     mygamma=torch.matmul(gamma_temp,torch.ones(1,num_features) )
     myomega=myepsilon * mygamma
     myZ=torch.cos(torch.matmul(Xdata,myomega) + myB)
-    myloss=(0.5/n)*torch.norm(G-torch.matmul(myZ,U),'fro')**2
+    myloss=(0.5*myscalar)*torch.norm(G-torch.matmul(myZ,U),'fro')**2
     return myloss
 
-def gamma_lossN(gamma_temp, Xdata,myB,myepsilon, G,U,num_features):
+
+def gamma_lossN(gamma_temp, Xdata,myB,myepsilon, G,U,num_features,myomegaweight,M):
     #n,num_features=myB.size()
     #U is M by 1
     n,k=G.size()
     nrows,ncols=gamma_temp.size()
+    myscalar=((1-myomegaweight)/(n*M))
     if nrows==1:
       gamma_temp=torch.t(gamma_temp)
     mygamma=torch.matmul(gamma_temp,torch.ones(1,num_features) )
     myomega=myepsilon * mygamma
     myZ=torch.cos(torch.matmul(Xdata,myomega) + myB)
-    myloss=(0.5/n)*torch.norm(G-torch.matmul(myZ,U),'fro')**2
+    myloss=(0.5*myscalar)*torch.norm(G-torch.matmul(myZ,U),'fro')**2
     return myloss
 
-def gamma_func_simplex(gamma_temp, Xdata,myB,myepsilon, G,U,num_features):
+
+def gamma_func_simplex(gamma_temp, Xdata,myB,myepsilon, G,U,num_features,myomegaweight,M):
     #n,num_features=myB.size()
     #U is M by 1
     n,k=G.size()
     nrows,ncols=gamma_temp.size()
+    myscalar=((1-myomegaweight)/(n*M))
     if nrows==1:
       gamma_temp=torch.t(gamma_temp)
     mygamma=torch.matmul(gamma_temp,torch.ones(1,num_features) )
     myomega=myepsilon * mygamma
     myZ=torch.cos(torch.matmul(Xdata,myomega) + myB)
     gpLY=torch.matmul(torch.t(gamma_temp),torch.ones_like(gamma_temp))
-    myobjective=(0.5/n)*torch.norm(G-torch.matmul(myZ,U),'fro')**2 + gpLY
+    myobjective=(0.5*myscalar)*torch.norm(G-torch.matmul(myZ,U),'fro')**2 + gpLY
     return myobjective
+
+
 
 def kernelparameters(X1,X2,h):
   #h- how many nearest  neighbors
@@ -520,8 +551,12 @@ def Nearest_Centroid_classifier(X_train,X_test,Y_train,Y_test):
 
 
 
+
+
+
 #this is faster and seem to get better variable selection that above
-def AcceProgGradFistaBacktrack(X,gamma,G,U,myB,num_features,myepsilon,max_iter,update_thresh):
+def AcceProgGradFistaBacktrack(X,gamma,G,U,myB,num_features,myepsilon,max_iter,update_thresh,
+                              myomegaweight,M):
   #FISTA with bracktracking from Beck and Teboulle
   #objective history
   ObjHist=torch.zeros(max_iter+1)
@@ -530,7 +565,8 @@ def AcceProgGradFistaBacktrack(X,gamma,G,U,myB,num_features,myepsilon,max_iter,u
   #gr descent
   #gInit=gamma
   gammaOut=gamma.clone()
-  ObjHist[0]=gamma_loss(gammaOut, X,myB,myepsilon, G,U,num_features)
+  ObjHist[0]=gamma_loss(gammaOut, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
+  #print('ObjHist[0]',ObjHist[0])
   relObjHist[0]=10000
 
   #initiate FISTA variables
@@ -540,7 +576,7 @@ def AcceProgGradFistaBacktrack(X,gamma,G,U,myB,num_features,myepsilon,max_iter,u
       gammad_Old=gY.clone()
       # gammad_Old.zero_()
       gammad_Old.requires_grad_(True)
-      gamma2=gamma_loss(gammad_Old, X,myB,myepsilon, G,U,num_features)
+      gamma2=gamma_loss(gammad_Old, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
       if gammad_Old.grad is not None:
         gammad_Old.grad.zero_()
       gamma2.backward() #computes gradient
@@ -552,8 +588,8 @@ def AcceProgGradFistaBacktrack(X,gamma,G,U,myB,num_features,myepsilon,max_iter,u
       #projection
             mygammanew=simplex_proj(torch.squeeze(grad_new))
             gradDiff=mygammanew - gY
-            ObjNew=gamma_loss(mygammanew, X,myB,myepsilon, G,U,num_features)
-            ObjOld=gamma_loss(gY, X,myB,myepsilon, G,U,num_features)
+            ObjNew=gamma_loss(mygammanew, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
+            ObjOld=gamma_loss(gY, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
             gpLY=torch.matmul(torch.t(mygammanew),torch.ones_like(mygammanew))
             QL=ObjOld + torch.matmul(torch.t(gammad_Old.grad), gradDiff) + (0.5 *alpha  * torch.matmul(torch.t(gradDiff), gradDiff)) + gpLY
             gYOld=gY
@@ -568,31 +604,39 @@ def AcceProgGradFistaBacktrack(X,gamma,G,U,myB,num_features,myepsilon,max_iter,u
                 alpha=(2**j)*alpha #L=2^jL_{i-1}
                 j=j+1
 
-      loss=gamma_loss(gammaOut, X,myB,myepsilon, G,U,num_features)
+      loss=gamma_loss(gammaOut, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
       ObjHist[i]=loss.detach()
       reldiff= torch.norm(gammaOut-gYOld,'fro')**2 / torch.norm(gYOld,'fro')**2
       relObj=torch.abs(ObjHist[i]-ObjHist[i-1])/ObjHist[i-1]
       relObjHist[i]=relObj
-      #print('rel diff and obj at iter ', i, reldiff, relObj)
-      # if ( torch.min(reldiff,relObj) < update_thresh):
+      #print('rel diff and obj at iter Backtrack update_thresh', i, reldiff, relObj,update_thresh)
+      #if ( torch.min(reldiff,relObj) < update_thresh):
       #   print('rel diff and obj at iter conver', i, reldiff, relObj)
       #   break
+      
+      #if ( reldiff < update_thresh):
+      #   print('rel obj at iter conver', i, reldiff, relObj)
+      #    break
 
+    
       if i > num_avg_samples \
         and (torch.mean(ObjHist[i - (num_avg_samples - 1):i]) - ObjHist[i]) < update_thresh:
-          #print("update thresh [{}] for accel proj satisfied at interval {}, exiting...".format(update_thresh, i))
+          #print("update thresh [{}] for accel proj satisfied at iteration {}, exiting...".format(update_thresh, i))
           break
       if i > num_avg_samples \
         and (torch.mean(relObjHist[i - (num_avg_samples - 1):i]) - relObjHist[i]) < update_thresh:
-          #print("update thresh [{}] for accel proj satisfied at interval {}, exiting...".format(update_thresh, i))
+          #print("update thresh [{}] for accel proj satisfied at iteration {}, exiting...".format(update_thresh, i))
           break
 
   return gammaOut.detach() #detaches gradient
 
 
+
+
 #main algorithm for nonlinear joint association and prediction
 #July 15, 2022
-def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outcometype='continuous',kernel_param=[],mylambda=[], max_iter_nsir=500, max_iter_PG=500, update_thresh_nsir=10**-6,update_thresh_PG=10**-6,standardize_Y=False,standardize_X=False):
+def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outcometype='continuous',kernel_param=[],mylambda=[], max_iter_nsir=500, max_iter_PG=500, update_thresh_nsir=10**-6,update_thresh_PG=10**-6,standardize_Y=False,standardize_X=False,
+                       myomegaweight=0.5):
   torch.manual_seed(seed=myseed)
 
   if not isinstance(Xdata,list):
@@ -612,60 +656,77 @@ def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outco
 
   Yold=Y
   XOld=Xdata
+  #print('Xdata0',Xdata[0][0:5,0:5])
+  #print('Xdata1',Xdata[1][0:5,0:5])
 
   if standardize_Y==True:
     if outcometype=='continuous':
       mycenter_Y[0]=torch.mean(Y,dim=0)
       mystd_Y[0]=torch.std(Y,dim=0)
       Y=torch.div(Y-torch.mean(Y,dim=0).repeat(n,1),torch.std(Y,dim=0))
-    elif outcometype=='binary':
+    elif outcometype=='categorical':
       Y=Y
   elif standardize_Y==False:
     if outcometype=='continuous':
       mycenter_Y[0]=torch.mean(Y,dim=0)
       Y=Y-torch.mean(Y,dim=0)
-    elif outcometype=='binary':
+    elif outcometype=='categorical':
       Y=Y
 
   #if standardize X is true
   if standardize_X==True:
+    #print('working here')
     for d in range(M):
       mymean=torch.mean(Xdata[d],dim=0)
       mystd=torch.std(Xdata[d],dim=0)
-      Xdata[d]=torch.div(Xdata[d]-mymean,mystd)
+      Xdata[d]=torch.div(XOld[d]-mymean,mystd)
+      #Xdata[d]=torch.div(XOld[d],torch.norm(XOld[d],'fro'))
+      #print('myfrocheck',torch.norm(Xdata[d],'fro'))
       mycenter_X[d]=mymean
       mystd_X[d]=mystd
-
+      
+  #print('Xdata0',Xdata[0][0:5,0:5])
+  #print('Xdata1',Xdata[1][0:5,0:5])
   #estimate kernel parameter if empty
   if not kernel_param:
      if n<=1000:
        kernel_param=median_heuristicsbatch(Xdata)
      elif n>1000:
        kernel_param=kernelparameters(Xdata,Xdata,h=20)
-
+  print('kernel_param',kernel_param)
   #set mylambda to 1 for all view if empty
   if not mylambda:
      mylambda=[1]*M
 
   if not num_features:
     n1=Yold.size(0)
-    print('n1 is', n1)
     if n1>=1000:
       num_features=int(300)
     else:
       num_features=int(torch.floor(torch.tensor(n1/2)))
-      print('num_features is', num_features)
+  print('num_features is', num_features)
 
   #estimate number of components if emtpy
   if ncomponents==0:
     ncomponents=chooseK(Xdata, kernel_param,eigsplot=False, TopK=20, threshold = 0.1, verbose=True)
-    ncomponents=int(ncomponents)
+    ncomponents=int(ncomponents)  #
+#     #use this for r-1
+#    ncomponents=int(ncomponents)  -1
+#     #use this for r+1
+    #ncomponents=int(ncomponents)  + 1
+    print('ncomponents',ncomponents)
 
   #ObjHist=[]
   for d in range(M):
     n,pd=(Xdata[d]).size()
+    #print('kernel_param[d]',kernel_param[d])
     gamma[d]=torch.ones(pd,1)/kernel_param[d]
+    #chec2=torch.unsqueeze(torch.norm(Xdata[d],dim=0),dim=-1)
+    #print(chec2[0:5])
+    #gamma[d]=chec2/kernel_param[d]
+    #print('gamma[d]',gamma[d][0:10])
     gamma[d]=gamma[d]/torch.sum(gamma[d])
+    #print('gamma[d]',gamma[d][0:10])
     chec=torch.squeeze(torch.ones(pd,1)/kernel_param[d])
  
   #random features
@@ -685,23 +746,24 @@ def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outco
   if outcometype=='continuous':
     mybeta=torch.zeros(ncomponents,q)
     myoptscore=torch.eye(n)
-  elif outcometype=='binary':
+  elif outcometype=='categorical':
     myoptscore=torch.rand(nc,nc-1)
     mybeta=torch.rand(ncomponents,nc-1)
 
 
   #track objective
   ObjHist=torch.zeros(max_iter_nsir+1)
-  ObjHist[0]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype)
+  ObjHist[0]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype,myomegaweight)
   RelObjHist=torch.zeros(max_iter_nsir+1)
   RelObjHist[0]=1
+  print('ObjHist',ObjHist[0])
 
   for i in range(1,max_iter_nsir+1):
     print("iteration", i)
     #new rescaling gamma with other parameters fixed
     gamma_temp=gamma
     for d in range(M):
-      gamma[d]=AcceProgGradFistaBacktrack(Xdata[d],gamma_temp[d],G,U[d],myB[d],num_features,myepsilon[d],max_iter_PG,update_thresh_PG)
+      gamma[d]=AcceProgGradFistaBacktrack(Xdata[d],gamma_temp[d],G,U[d],myB[d],num_features,myepsilon[d],max_iter_PG,update_thresh_PG, myomegaweight,M)
       nrows,ncols=gamma[d].size()
       if nrows==1:
         gamma[d]=torch.t(gamma[d])
@@ -710,27 +772,27 @@ def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outco
       myZ[d]=torch.cos(torch.matmul(Xdata[d],myomega[d]) + myB[d])
 
     #solve for Ud
-    U=solve_ind_loads(G, myZ,mylambda,num_features)
+    U=solve_ind_loads(G, myZ,mylambda,num_features,myomegaweight)
     U=[U[d]/torch.norm(U[d],'fro') for d in range(M)]
 
     #solve for G, beta and bias
-    if outcometype=='binary':
-      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents)
+    if outcometype=='categorical':
+      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents,myomegaweight)
       G=Ghat[0]
     elif outcometype=='continuous':
-      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents)
+      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents,myomegaweight)
       G=Ghat[0]
     #solve for beta
     if outcometype=='continuous':
-      mybeta=solve_theta_continuos(Y,G)
+      mybeta=solve_theta_continuos(Y,G,myomegaweight)
       myoptscore=torch.eye(n) #this is a placeholder, doesn't get used
-    elif outcometype=='binary':
-      solOpt=solve_OptScore_theta(Y,G,mybeta,myoptscore)
+    elif outcometype=='categorical':
+      solOpt=solve_OptScore_theta(Y,G,mybeta,myoptscore,myomegaweight)
       mybeta=solOpt['thetahat']
       myoptscore=solOpt['OptScore']
 
    #keep track of objective
-    ObjHist[i]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype)
+    ObjHist[i]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype,myomegaweight)
     relObj=torch.abs(ObjHist[i]-ObjHist[i-1])/(ObjHist[i-1])
     RelObjHist[i]=relObj
     #print('Objective, relobj', i, ObjHist[i],RelObjHist[i])
@@ -738,13 +800,13 @@ def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outco
     #   print('convergence at iteration',i, relObj)
     #   break
 
-    # if i > num_avg_samples \
-    #     and (torch.mean(ObjHist[i - (num_avg_samples - 1):i]) - ObjHist[i]) < update_thresh_nsir:
-    #       print("update thresh [{}] for nsir satisfied at interval {}, exiting...".format(update_thresh_nsir, i))
-    #       break
+    if i > num_avg_samples \
+        and (torch.mean(ObjHist[i - (num_avg_samples - 1):i]) - ObjHist[i]) < update_thresh_nsir:
+          print("update thresh [{}] for randmvlearn satisfied at interval {}, exiting...".format(update_thresh_nsir, i))
+          break
     if i > num_avg_samples \
         and (torch.mean(RelObjHist[i - (num_avg_samples - 1):i]) - RelObjHist[i]) < update_thresh_nsir:
-          print("update thresh [{}] for randmvlearn satisfied at interval {}, exiting...".format(update_thresh_nsir, i))
+          print("update thresh [{}] for randmvlearn satisfied at iteration {}, exiting...".format(update_thresh_nsir, i))
           break
 
   if outcometype=='continuous':
@@ -762,7 +824,7 @@ def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outco
     mysel=abs(gt)>0.0
     gammaAsOnes2=torch.zeros_like(gamma2[d])
     gammaAsOnes2[mysel==True]=1.0
-    gammaAsOnes[d]=gammaAsOnes2.detach().numpy()
+    gammaAsOnes[d]=torch.Tensor(gammaAsOnes2.detach().numpy())
     gamma[d]=gt
 
   return {
@@ -779,10 +841,10 @@ def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outco
         'ObjHist':ObjHist[2:i].detach().numpy(),
         'RelObjHist':RelObjHist[2:i].detach().numpy(),
         'Var_selection':gammaAsOnes,
-        #'Y_mean':mycenter_Y,
-        #'Y_std':mystd_Y,
-        #'X_mean':mycenter_X,
-        #'X_std':mystd_X,
+        'Y_mean':mycenter_Y,
+        'Y_std':mystd_Y,
+        'X_mean':mycenter_X,
+        'X_std':mystd_X,
         'Xdata':XOld,
         'Y': Yold,
         'kernel_param':kernel_param,
@@ -790,9 +852,12 @@ def NSIRAlgorithmFISTA(Xdata, Y, myseed=25, ncomponents=0,num_features=[], outco
         'num_features':num_features,
         'standardize_X':standardize_X,
         'standardize_Y':standardize_Y,
-        'outcometype':outcometype
+        'outcometype':outcometype,
+        'mykappaweight':myomegaweight,
+        'mylambda':mylambda
 
     }
+
 
 
 #tring new prediction with augmented data
@@ -825,138 +890,212 @@ def solve_joint_predict2New(Y,beta,Z,Ztrain,U,M,outcometype,ncomponents):
   }
 
 
-def PredictYNew(Ytest,Ytrain,Xtest,Xtrain,Gtrain=[],myb=[],gamma=[],thetahat=[],Ahat=[],myepsilon=[],outcometype=[],num_features=[],standardize_Y=[],standardize_X=[]):
+
+def PredictYNew(Ytest,Ytrain,Xtest,Xtrain,Gtrain=[],myb=[],gamma=[],thetahat=[],Ahat=[],myepsilon=[],outcometype=[],num_features=[],
+                standardize_Y=[],standardize_X=[], X_mean=[], X_std=[],Y_mean=[],Y_std=[],myomegaweight=0.5):
     #need to use testing data to compute Ztest, and then to compute Gtest and use that to obtain predicted Y
     #form Ztest
-    Uhat=Ahat
-    mybetahat=thetahat
     M= len(Xtest)
     myB=list(range(M))
     myomega=list(range(M))
     myZ=list(range(M))
     myZtrain=list(range(M))
-    Xtest_center=list(range(M))
-    Xtrain_center=list(range(M))
     ZU=0
-
     ntest,_=Xtest[0].size()
     ntrain,_=Gtrain.size()
+    
+    Uhat=Ahat
+    mybetahat=thetahat
 
     Ytest_Orig=Ytest
     Xtest_Orig=Xtest
-
     Xtrain_Orig=Xtrain
-    Ytrain_Orig=Ytrain
-
+    
+    
     if standardize_X==True:
       for d in range(M):
-        mX=torch.mean(Xtrain[d],dim=0)
-        stdX=torch.std(Xtrain[d],dim=0)
+        mX=X_mean[d]
+        stdX=X_std[d]
         mycenter=Xtest[d]-mX.repeat(ntest,1)
-
-        #standardize training data
-        Xtrain[d]=torch.div(Xtrain[d]-mX,stdX)
-
-        #standardize Xtest with mean and standard deviation from Xtrain
         Xtest[d]=torch.div(Xtest[d]-mX,stdX)
 
-    if outcometype=='continuous':
-         Y_mean=torch.mean(Ytrain,dim=0)
-         Y_std=torch.std(Ytrain,dim=0)
-
-    for d in range(M):
+    for d in range(M): 
         nTestRows,pd=Xtest[d].size()
         mygamma=torch.matmul(gamma[d],torch.ones(1,num_features) )   #repeat gamma # of random features times
         myomega[d]=myepsilon[d] * mygamma
         myB[d]=torch.matmul(torch.ones(nTestRows,1),myb[d]) #repeat myb nrow times
+        # myZ[d]=torch.cos(torch.matmul(Xtest_Orig[d],myomega[d]) + myB[d])
+        # myZtrain[d]=torch.cos(torch.matmul(Xtrain_Orig[d],myomega[d]) + torch.matmul(torch.ones(ntrain,1),myb[d]))
         myZ[d]=torch.cos(torch.matmul(Xtest[d],myomega[d]) + myB[d])
         myZtrain[d]=torch.cos(torch.matmul(Xtrain[d],myomega[d]) + torch.matmul(torch.ones(ntrain,1),myb[d]))
         ZU=ZU + torch.matmul(myZ[d],Uhat[d])
-
-
+    
     nTestRows,pd=Xtest[0].size()
     pd,ncomponents=Uhat[0].size()
 
     #calculate training error- don't transform back to original data
     if outcometype=='continuous':
-
         if standardize_Y==True:
-
-          Ystd=torch.div(Ytrain-Y_mean.repeat(ntrain,1),Y_std)
-          Gtrain=solve_joint_predict2(Ytrain,mybetahat,myZtrain,Uhat,M,outcometype,ncomponents)
-          GYt=torch.matmul(Gtrain[0],mybetahat)
+          Ystd=torch.div(Ytrain-Y_mean[0].repeat(ntrain,1),Y_std[0])
+          Gtrain2=solve_joint_predict2(Ytrain,mybetahat,myZtrain,Uhat,M,outcometype,ncomponents,myomegaweight)
+          GYt=torch.matmul(Gtrain2[0],mybetahat)
           TrainError=torch.mean( (GYt-Ystd)**2)
-
-        elif standardize_Y==False: #defaults to centering Y
-          Gtrain=solve_joint_predict2(Ytrain,mybetahat,myZtrain,Uhat,M,outcometype,ncomponents)
-          Ycentered=Ytrain-Y_mean.repeat(ntrain,1)
-          GYt=torch.matmul(Gtrain[0],mybetahat)
+          predictedY=GYt
+          true_y=Ystd           
+        elif standardize_Y==False: 
+          Gtrain2=solve_joint_predict2(Ytrain,mybetahat,myZtrain,Uhat,M,outcometype,ncomponents,myomegaweight)
+          Ycentered=Ytrain-Y_mean[0].repeat(ntrain,1)
+          GYt=torch.matmul(Gtrain2[0],mybetahat)
           TrainError=torch.mean( (GYt-Ycentered)**2)
-
-    #testing
+          predictedY=GYt
+          true_y=Ycentered
+    
+         #train prediction metrics
+        MSE=sklearn.metrics.mean_squared_error(true_y, predictedY)
+        MAE=sklearn.metrics.mean_absolute_error(true_y, predictedY)
+        #RMSE=sklearn.metrics.root_mean_squared_error(true_y, predictedY)
+        MedAE=sklearn.metrics.median_absolute_error(true_y, predictedY)
+        #PredictionMetrics_Train=['Mean Square Error,Mean Absolute Error,Root MSE, Median Abs Error:',MSE,MAE,RMSE,MedAE]
+        combined=MSE + MAE + MedAE
+        PredictionMetrics_Train=['Mean Square Error,Mean Absolute Error, Median Abs Error, Combined:',MSE,MAE,MedAE,combined]
+ 
+    
     if outcometype=='continuous':
-      #print('checking')
-      Gtest=solve_joint_predict2(Ytest,mybetahat,myZ,Uhat,M,outcometype,ncomponents)
+      #print('checking')  
+      Gtest=solve_joint_predict2(Ytest,mybetahat,myZ,Uhat,M,outcometype,ncomponents,myomegaweight)
       predictedY=torch.matmul(Gtest[0],mybetahat)
       if standardize_Y==True:
-         Yteststd=torch.div(Ytest-Y_mean.repeat(ntest,1),Y_std)
-         mse=torch.mean( (predictedY-Yteststd)**2)
+         Yteststd=torch.div(Ytest-Y_mean[0].repeat(ntest,1),Y_std[0])
+         mY=Y_mean[0]
+         stdY=Y_std[0]
+#         predictedY=predictedY
+         mse=torch.mean( (predictedY-Yteststd)**2) 
          TestError=mse
-
+         true_y=Yteststd
+         print(true_y[0:10])
+         print('Y_mean[0]',Y_mean[0])
+         print('Y_std[0]',Y_std[0])
       elif standardize_Y==False:
-         Ytestcentered=Ytest-Y_mean.repeat(ntest,1)
-         mse=torch.mean( (predictedY-Ytestcentered)**2)
+         mY=Y_mean[0] 
+         Ytestcentered=Ytest-Y_mean[0].repeat(ntest,1)
+#         predictedY=predictedY
+         mse=torch.mean( (predictedY-Ytestcentered)**2) 
          TestError=mse
-
+         true_y=Ytestcentered
+            
+      #obtain more prediciton metrics      
+       #test prediction metrics
+      MSE=sklearn.metrics.mean_squared_error(true_y, predictedY)
+      MAE=sklearn.metrics.mean_absolute_error(true_y, predictedY)
+      #RMSE=sklearn.metrics.root_mean_squared_error(true_y, predictedY)
+      MedAE=sklearn.metrics.median_absolute_error(true_y, predictedY)
+      #PredictionMetrics_Test=['Mean Square Error,Mean Absolute Error,Root MSE, Median Abs Error:',MSE,MAE,RMSE,MedAE]  
+      combined=MSE + MAE + MedAE
+      PredictionMetrics_Test=['Mean Square Error,Mean Absolute Error, Median Abs Error, Combined:',MSE,MAE,MedAE, combined]  
+      
+      
+      
+      #TrainError=torch.mean( (torch.matmul(Gtrain,mybetahat)-Ytrain)**2)     
       myPredict=predictedY
       LDAScoreTest=0
-      LDAScoreTrain=0
+      LDAScoreTrain=0 
         #check if some columns are zero, set MSE to very large so that corresponding tuning parameters
       ifzero=list(range(M))
+      #print('ifzero')
       for d in range(M):
           ifzero[d]=torch.sum(abs(gamma[d]))
-      if(torch.min(torch.Tensor(ifzero))==0):
+      if(torch.min(torch.Tensor(ifzero))==0):   
           TestError=100000.0
           TrainError=100000.0
-
-    elif outcometype=='binary':
-      Gtrain=solve_joint_predict2(Ytrain,mybetahat,myZtrain,Uhat,M,outcometype,ncomponents)
+            
+    elif outcometype=='categorical':
       Ytestn=torch.zeros(Ytest.size(0),1)
-      Gtest=solve_joint_predict2(Ytestn,mybetahat,myZ,Uhat,M,outcometype,ncomponents)
+      Gtest=solve_joint_predict2(Ytestn,mybetahat,myZ,Uhat,M,outcometype,ncomponents,myomegaweight)
       LDAScoreTest=torch.matmul(Gtest[0], mybetahat)
-      LDAScoreTrain=torch.matmul(Gtrain[0], mybetahat)
+      Ytrainn=torch.zeros(Ytrain.size(0),1)
+      Gtrain2=solve_joint_predict2(Ytrainn,mybetahat,myZtrain,Uhat,M,outcometype,ncomponents,myomegaweight)
+      #LDAScoreTrain=torch.matmul(Gtrain, mybetahat)
+      LDAScoreTrain=torch.matmul(Gtrain2[0], mybetahat)
       n,r=LDAScoreTest.size()
-      if r >= 1:
+      if r >= 1:          
             LDAScoreTest=torch.squeeze(LDAScoreTest)
       n,r=LDAScoreTrain.size()
-      if r >= 1:
+      if r >= 1:          
             LDAScoreTrain=torch.squeeze(LDAScoreTrain)
       n,r=Ytrain.size()
-      if r >= 1:
+      if r >= 1:          
             YtrainNew=torch.squeeze(Ytrain)
       n,r=Ytest.size()
-      if r >= 1:
+      if r >= 1:          
             YtestNew=torch.squeeze(Ytest)
+        
       #nearest centroid classification
       myPredict=Nearest_Centroid_classifier(LDAScoreTrain,LDAScoreTest,YtrainNew,YtestNew)
-      TestError=myPredict['EstErrorTest']
+      TestError=myPredict['EstErrorTest'] 
       TrainError=myPredict['EstErrorTrain']
-
+      
+      #test prediction metrics
+      y_pred=myPredict['predictedYtest']
+      BA=sklearn.metrics.balanced_accuracy_score(YtestNew, y_pred)
+      f1=sklearn.metrics.f1_score(YtestNew, y_pred,average='weighted')
+      mcc=sklearn.metrics.matthews_corrcoef(YtestNew, y_pred)
+      acc=sklearn.metrics.accuracy_score(YtestNew, y_pred)
+      combined=BA + f1+mcc+acc
+      PredictionMetrics_Test=['BalancedAccuracy,Accuracy,MCC,F1,combined:',BA,acc,mcc,f1,combined]  
+        
+      #train prediction metrics  
+      y_pred=myPredict['predictedYtrain']
+      BA=sklearn.metrics.balanced_accuracy_score(YtrainNew, y_pred)
+      f1=sklearn.metrics.f1_score(YtrainNew, y_pred,average='weighted')
+      mcc=sklearn.metrics.matthews_corrcoef(YtrainNew, y_pred)
+      acc=sklearn.metrics.accuracy_score(YtrainNew, y_pred)
+      combined=BA + f1+mcc+acc  
+      PredictionMetrics_Train=['BalancedAccuracy,Accuracy,MCC,F1,combined:',BA,acc,mcc,f1,combined]  
+        
       ifzero=list(range(M))
       for d in range(M):
           ifzero[d]=torch.sum(abs(gamma[d]))
-      if(torch.min(torch.Tensor(ifzero))==0):
+      #print(gamma_temp[d][0:5])
+        
+      if(torch.min(torch.Tensor(ifzero))==0):        
           TestError=1.0
           TrainError=1.0
-
-    return {
+        
+    return { 
           'predictedEstimates':myPredict,
-          'TestError':TestError,
-          'TrainError':TrainError,
-          'Gtest':Gtest[0],
-          'Gtrain':Gtrain[0],
-          'Xtest_standardized':Xtest
+          'Test Error':TestError,
+          'Train Error':TrainError,
+          'PredictionMetrics_Train':PredictionMetrics_Train,
+          'PredictionMetrics_Test':PredictionMetrics_Test,
+          'Gtest':Gtest,
+          'Gtrain':Gtrain,
+          'LDAScoreTest':LDAScoreTest,
+          'LDAScoreTrain':LDAScoreTrain,
+          'Xtestdata':Xtest
         }
+
+#only solves of G in prediction
+def solve_joint_predict2(Y,beta,Z,U,M,outcometype,ncomponents,myomegaweight):
+
+  n,_=Y.size()
+  Y=torch.zeros_like(Y)
+  beta=torch.zeros_like(beta)
+  myscalar=(math.sqrt(1-myomegaweight)/math.sqrt(n*M))
+  myscalar1=(math.sqrt(myomegaweight)/math.sqrt(n))
+  #form tildeY, Y is n x 1 (for single continous outome) or n by q
+  M=len(Z)
+  r=U[0].size(1) #number of columns
+  ZU=[torch.matmul(myscalar*Z[d],U[d]) for d in range(M)   ]
+  tildeY=torch.cat((myscalar1*Y, torch.cat(ZU,1) ),1    )
+  tilde_theta=torch.cat(  (beta, torch.cat(M*[torch.eye(r)],1) ),1 )
+  YBt2=(1/2)*torch.cat(ZU,1)
+  YBt=torch.matmul(YBt2, torch.t(torch.cat(M*[torch.eye(r)],1)))
+  Ghat2=mysvdt(YBt)
+  Ghat=Ghat2
+
+  return Ghat
+
+
 
 def median_heuristicsbatch(X):
   M=len(X)
@@ -1199,43 +1338,48 @@ def generateBinaryData(myseed=1234,n1=200,n2=500,p1=1000,p2=1000,sigmax11=0.1,si
 }
 
 
-####################Group variable selection codes
+
+
+
 def SparseIndGroupParallel(kk,Xtrain, Ytrain, myseed, ncomponents,num_features,hasGroupInfo, outcometype,kernel_param,mylambda, lassopenalty_list, myeta,groupsd,max_iter_nsir,
-                   max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,Yvalid,Xvalid):
+                   max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,Yvalid,Xvalid,myomegaweight):
 
         nrows=len(lassopenalty_list)
         myvalidMSEsmat=torch.zeros(nrows,2)
         lassopenaltynum=torch.zeros(nrows,1)
         lassopenaltyd=torch.Tensor(lassopenalty_list[kk])
-        #temp=lassopenalty_list
-        #temp=lassopenalty_list[kk].clone()
-        #lassopnealtyd=lassopenalty_list[kk].clone()
-        #lassopnealtyd=temp[kk]
+        print('lassopenaltyd',lassopenaltyd)
 
         print('working on grid', kk,lassopenaltyd)
 
         myalg=NSIRAlgorithmFISTASIndandGLasso(Xtrain, Ytrain, myseed, ncomponents,num_features, hasGroupInfo,groupsd,outcometype,
         kernel_param,mylambda, lassopenaltyd, myeta,max_iter_nsir, max_iter_PG,
-        update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X)
+        update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,myomegaweight)
 
         predict_Y=PredictYNew(Yvalid,Ytrain,Xvalid,Xtrain,myalg['Ghat'],myalg['myb'],myalg['gamma'],myalg['thetahat'],myalg['Ahat'],
-                                          myalg['myepsilon'],outcometype,num_features,standardize_Y,standardize_X)
+                                          myalg['myepsilon'],outcometype,num_features,standardize_Y,standardize_X,
+                              myalg['X_mean'],myalg['X_std'],myalg['Y_mean'],myalg['Y_std'],myomegaweight)
 
-
-        myvalidMSEsmat=predict_Y['TestError']
+        if outcometype=='continuous':
+            myvalidMSEsmat=predict_Y['Test Error']
+        elif outcometype=='categorical':
+            myvalidMSEsmat=predict_Y['Test Error']
         lassopenaltynum=kk
 
         return myvalidMSEsmat,lassopenaltynum
 
+
+
 ####For group and individual variable selection
 
-def AcceProgGradFistaSGlassoNew2(X,gamma,G,U,myB,num_features,myrho,eta,grpweights,groups,myepsilon,max_iter,update_thresh):
+
+def AcceProgGradFistaSGlassoNew2(X,gamma,G,U,myB,num_features,myrho,eta,grpweights,groups,myepsilon,max_iter,update_thresh,myomegaweight,M):
   #FISTA with bracktracking from Beck and Teboulle
   #objective history
       ObjHist=torch.zeros(max_iter+1)
       relObjHist=torch.zeros(max_iter+1)
-      num_avg_samples=15 #changed this from 10 to 25 on Dec 19 2022
-      ObjHist[0]=gamma_loss(gamma, X,myB,myepsilon, G,U,num_features)
+      num_avg_samples=25 #changed this from 10 to 25 on Dec 19 2022
+      ObjHist[0]=gamma_loss(gamma, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
       relObjHist[0]=10000
       nG=len(groups)
       tvec=torch.zeros(max_iter+2)
@@ -1259,7 +1403,7 @@ def AcceProgGradFistaSGlassoNew2(X,gamma,G,U,myB,num_features,myrho,eta,grpweigh
           gammad_Old=gY.clone()
 
           gammad_Old.requires_grad_(True)
-          gamma2=gamma_loss(gammad_Old, X,myB,myepsilon, G,U,num_features)
+          gamma2=gamma_loss(gammad_Old, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
           if gammad_Old.grad is not None:
              gammad_Old.grad.zero_()
           gamma2.backward() #computes gradient
@@ -1271,8 +1415,8 @@ def AcceProgGradFistaSGlassoNew2(X,gamma,G,U,myB,num_features,myrho,eta,grpweigh
                     mygammanew=SparseGroupLassoNew(grad_new,myrho2,eta,grpweights,groups)
                     gradDiff=mygammanew - gY
                     #ObjNew=gamma_loss(mygammanew, X,myB,myepsilon, G,U,num_features)
-                    ObjNew=gamma_func(mygammanew, X,myB,myepsilon, G,U,num_features,grpweights,groups,myrho2,eta)
-                    ObjOld=gamma_loss(gY, X,myB,myepsilon, G,U,num_features)
+                    ObjNew=gamma_func(mygammanew, X,myB,myepsilon, G,U,num_features,grpweights,groups,myrho2,eta,myomegaweight,M)
+                    ObjOld=gamma_loss(gY, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
                     mysum=0
                     for g in range(nG):
                       mysum=mysum + grpweights[g]*torch.norm(mygammanew[groups[g]],p=2)
@@ -1294,7 +1438,7 @@ def AcceProgGradFistaSGlassoNew2(X,gamma,G,U,myB,num_features,myrho,eta,grpweigh
 
           if(torch.norm(mygammanew,p=2)!=0):
             gammaOut=mygammanew
-          loss=gamma_loss(mygammanew, X,myB,myepsilon, G,U,num_features)
+          loss=gamma_loss(mygammanew, X,myB,myepsilon, G,U,num_features,myomegaweight,M)
           ObjHist[i]=loss.detach()
           reldiff= torch.norm(mygammanew-gYOld,'fro')**2 / torch.norm(gYOld,'fro')**2
           relObj=torch.abs(ObjHist[i]-ObjHist[i-1])/ObjHist[i-1]
@@ -1313,9 +1457,11 @@ def AcceProgGradFistaSGlassoNew2(X,gamma,G,U,myB,num_features,myrho,eta,grpweigh
 
 
 
+
+
 def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, hasGroupInfo,
           GroupIndices,outcometype,kernel_param,mylambda, myrho, myeta,max_iter_nsir,
-          max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
+          max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,myomegaweight):
   #grpweights is a list of list-eg grpweiths[M][groups]
   #lassopenalty is a list for each View
   torch.manual_seed(seed=myseed)
@@ -1344,13 +1490,13 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
       mycenter_Y[0]=torch.mean(Yold,dim=0)
       mystd_Y[0]=torch.std(Yold,dim=0)
       Y=torch.div(Yold-torch.mean(Yold,dim=0).repeat(n,1),torch.std(Y,dim=0).repeat(n,1))
-    elif outcometype=='binary':
+    elif outcometype=='categorical':
       Y=Yold
   elif standardize_Y==False:
     if outcometype=='continuous':
       mycenter_Y[0]=torch.mean(Yold,dim=0)
       Y=Yold-torch.mean(Yold,dim=0)
-    elif outcometype=='binary':
+    elif outcometype=='categorical':
       Y=Yold
 
 
@@ -1395,21 +1541,18 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
       num_features=int(300)
     else:
       num_features=int(torch.floor(torch.tensor(n1/2)))
-      print('num_features is', num_features)
+  print('num_features is', num_features)
 
   #estimate number of components if emtpy
   if ncomponents==0:
     ncomponents=chooseK(Xdata, kernel_param,eigsplot=False, TopK=20, threshold = 0.1, verbose=True)
     ncomponents=int(ncomponents)
+    print('ncomponents is',ncomponents)
 
   #get group weights
   gWeight=getWeights(GroupIndices,hasGroupInfo)
   grpweights=gWeight['grpweightsd']
   groups=gWeight['groupsd']
-  #print(grpweights)
-  #print(groups)
-
-
 
   rhoUpper=list(range(M))
   for d in range(M):
@@ -1423,12 +1566,11 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
             uG=num/den
             ggd[groups[d][g].long()]=uG
         gamma[d]=ggd
-        #rhoUpper[d]=tunerange(gamma[d],myeta[d],grpweights[d],groups[d])
-
+ 
     elif hasGroupInfo[d]==0:
         gamma[d]=torch.ones(pd,1)/kernel_param[d]
-        #rhoUpper[d]=0.0 #just a place holder
-
+        gamma[d]=gamma[d]/torch.sum(gamma[d])
+ 
   #random features
   myZout=random_features_sparsity(Xdata,num_features,gamma,kernel_param)
 
@@ -1442,27 +1584,22 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
 
 
   #initialize
-#   q,r=torch.linalg.qr(torch.randn(Xdata[0].size(0),ncomponents))
-#   G=q
-
-  #G=torch.rand(Xdata[0].size(0),ncomponents)
-  q,r=torch.linalg.qr(torch.randn(Xdata[0].size(0),ncomponents))
-  G=q
-
+  G=torch.rand(Xdata[0].size(0),ncomponents)
   U=[torch.rand(num_features,ncomponents) for d in range(M)]
   U=[U[d]/torch.norm(U[d],'fro') for d in range(M) ]
-
+    
+    
   q=Y.size(1)
   if outcometype=='continuous':
     mybeta=torch.zeros(ncomponents,q)
     myoptscore=torch.eye(n)
-  elif outcometype=='binary':
+  elif outcometype=='categorical':
     myoptscore=torch.rand(nc,nc-1)
     mybeta=torch.rand(ncomponents,nc-1)
 
   #track objective
   ObjHist=torch.zeros(max_iter_nsir+1)
-  ObjHist[0]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype)
+  ObjHist[0]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype,myomegaweight)
 
   RelObjHist=torch.zeros(max_iter_nsir+1)
   RelObjHist[0]=1
@@ -1472,11 +1609,17 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
   mynonzeros=torch.nonzero(torch.Tensor(hasGroupInfo))
   mynzmat=torch.zeros(mynonzeros.size(0),2) # a zero matrix with number of nonzeros as rows
   #and 2 columns; first column
+  #cc=torch.FloatTensor(myrho)
   try:
     cc=torch.FloatTensor(myrho)
   except:
     cc=torch.Tensor(myrho)
-  mynzmat[:,0]=torch.t(cc[mynonzeros]) #extract rho for nonzeros
+  print('mynonzeros,cc,myrho',mynonzeros,cc,myrho)
+  try:
+    mynzmat[:,0]=torch.t(cc[mynonzeros]) #extract rho for nonzeros
+  except:
+    #mynzmat[:,0]=torch.t(myrho) #commented out Nov 21, 2024 try
+    mynzmat[:,0]=torch.t(cc)
   mynzmat[:,1]=torch.t(mynonzeros)
 
   for i in range(1,max_iter_nsir+1):
@@ -1485,16 +1628,19 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
 
           if hasGroupInfo[d]==1:
               myrhonew=mynzmat[mynzmat[:,1]==d,0]
+              #print('myrhonew',myrhonew)
               gamma_temp[d]=gamma[d]
               tic = time.perf_counter()
               gamma[d]=AcceProgGradFistaSGlassoNew2(Xdata[d],gamma_temp[d],G,U[d],myB[d],num_features,myrhonew,myeta[d],grpweights[d],
-                                              groups[d],myepsilon[d],max_iter_PG,update_thresh_PG)
+                                              groups[d],myepsilon[d],max_iter_PG,update_thresh_PG,myomegaweight,M)
               toc=time.perf_counter()
               times1=toc-tic
 
+                
+                
           elif hasGroupInfo[d]==0:
               gamma[d]=AcceProgGradFistaBacktrack(Xdata[d],gamma_temp[d],G,U[d],myB[d],num_features,
-                                                   myepsilon[d],max_iter_PG,update_thresh_PG)
+                                                   myepsilon[d],max_iter_PG,update_thresh_PG,myomegaweight,M)
 
           nrows,ncols=gamma[d].size()
           if nrows==1:
@@ -1510,27 +1656,27 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
         break
 
     #solve for Ud
-    U=solve_ind_loads(G, myZ,mylambda,num_features)
+    U=solve_ind_loads(G, myZ,mylambda,num_features,myomegaweight)
     U=[U[d]/torch.norm(U[d],'fro') for d in range(M)]
 
     #solve for G, beta and bias
-    if outcometype=='binary':
-      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents)
+    if outcometype=='categorical':
+      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents,myomegaweight)
       G=Ghat[0]
     elif outcometype=='continuous':
-      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents)
+      Ghat=solve_joint(Y,mybeta,myZ,U,myoptscore,M,outcometype,mylambda,ncomponents,myomegaweight)
       G=Ghat[0]
     #solve for beta
     if outcometype=='continuous':
-      mybeta=solve_theta_continuos(Y,G)
+      mybeta=solve_theta_continuos(Y,G,myomegaweight)
       myoptscore=torch.eye(n) #this is a placeholder, doesn't get used
-    elif outcometype=='binary':
-      solOpt=solve_OptScore_theta(Y,G,mybeta,myoptscore)
+    elif outcometype=='categorical':
+      solOpt=solve_OptScore_theta(Y,G,mybeta,myoptscore,myomegaweight)
       mybeta=solOpt['thetahat']
       myoptscore=solOpt['OptScore']
 
    #keep track of objective
-    ObjHist[i]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype)
+    ObjHist[i]=myloss(myZ,Y,G,mybeta,U,myoptscore,mylambda,M,outcometype,myomegaweight)
     relObj=torch.abs(ObjHist[i]-ObjHist[i-1])/(ObjHist[i-1])
     RelObjHist[i]=relObj
 
@@ -1582,6 +1728,10 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
         'RelObjHist':RelObjHist[2:i].detach(),
         'Var_selection':gammaasonesn,
         'GroupSelection':gammaGroupn,
+        'Y_mean':mycenter_Y,
+        'Y_std':mystd_Y,
+        'X_mean':mycenter_X,
+        'X_std':mystd_X,
         'Xdata':XOld,
         'Y': Yold,
         'kernel_param':kernel_param,
@@ -1592,12 +1742,14 @@ def NSIRAlgorithmFISTASIndandGLasso(Xdata, Y,myseed, ncomponents,num_features, h
         'outcometype':outcometype,
         'GroupInfo': hasGroupInfo,
         'GroupIndices': GroupIndices,
+        'Groups':groups,
+        'GroupWeights': grpweights,
         'myrho': myrho,
-        'myeta':myeta
+        'myeta':myeta,
+        'mylambda':mylambda,
+        'mykappaweight':myomegaweight
+      
     }
-
-
-
 
 def SparseGroupLassoNew(gamma,myrho,eta,grpweights,groups):
     nG=len(groups)
@@ -1649,11 +1801,12 @@ def getWeights(GroupIndicies,hasGroupInfo):
    }
 
 
-def gamma_func(gamma_temp, Xdata,myB,myepsilon, G,U,num_features,grpweights,groups,myrho,eta):
+def gamma_func(gamma_temp, Xdata,myB,myepsilon, G,U,num_features,grpweights,groups,myrho,eta,myomegaweight,M):
     #U is M by 1
     nG=len(groups)
     n,k=G.size()
     nrows,ncols=gamma_temp.size()
+    myscalar=((1-myomegaweight)/(n*M))
     if nrows==1:
       gamma_temp=torch.t(gamma_temp)
     mygamma=torch.matmul(gamma_temp,torch.ones(1,num_features) )
@@ -1664,7 +1817,7 @@ def gamma_func(gamma_temp, Xdata,myB,myepsilon, G,U,num_features,grpweights,grou
       mysum=mysum + grpweights[g]*torch.norm(gamma_temp[groups[g]],p=2)
 
     gpLY=eta*myrho*torch.norm(gamma_temp,p=1)+(1-eta)*myrho*mysum
-    myobjective=(0.5/n)*torch.norm(G-torch.matmul(myZ,U),'fro')**2 + gpLY
+    myobjective=(0.5*myscalar)*torch.norm(G-torch.matmul(myZ,U),'fro')**2 + gpLY
     return myobjective
 
 
@@ -1691,11 +1844,9 @@ def GroupSelected(gammaAsOnes,GroupIndices, hasGroupInfo):
   return GroupSelection
 
 
-
 #################Cross-validation
-def chooselassoValid2IndGroup(Xtrain, Ytrain,Xvalid,Yvalid,myseed,ncomponents,num_features,hasGroupInfo,numbercores,outcometype,kernel_param,mylambda, myeta,
-                         myrhomin, myrhomax,groupsd,gridmethod,ngrid,max_iter_nsir, max_iter_PG,
-                         update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
+def chooselassoValid2IndGroup(Xtrain,Ytrain,Xvalid,Yvalid,myseed,ncomponents,num_features,hasGroupInfo,numbercores,outcometype,kernel_param,mylambda, myeta,  myrhomin, myrhomax,groupsd,gridmethod,ngrid,max_iter_nsir, max_iter_PG,
+                         update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,myomegaweight):
 #grplassopenalty - list of d entries for each view
 #myrhomin-list of d entries of minimum lassopenalty to use, set to [] if no group information
 #myrhomax- list of d entries of maximum lassopenalty to use, set to [] if no group information
@@ -1726,12 +1877,12 @@ def chooselassoValid2IndGroup(Xtrain, Ytrain,Xvalid,Yvalid,myseed,ncomponents,nu
             else:
               lassomax2[d]=myrhomax[mygroupinfo[d]]
 
-            lassopenalty_listd[d]=torch.linspace(lassomin2[d],lassomax2[d],ngrid)
+        lassopenalty_listd[d]=torch.linspace(lassomin2[d],lassomax2[d],ngrid)
+        print('lassopenalty_listd',lassopenalty_listd)
 
-  lasso_cat=torch.cat(lassopenalty_listd)
-  myPermutations=list(itertools.permutations(lasso_cat, r=mygroupinfo.size(0)))
-  myPermutations.sort()
-  uniquecomb=torch.Tensor(list(myPermutations for myPermutations,_ in itertools.groupby(myPermutations)))
+  uniquecomb=list(itertools.product(*lassopenalty_listd))
+  print(uniquecomb)
+  print('len(uniquecomb)',len(uniquecomb))
   if gridmethod=='RandomSearch':
     random.seed(12345)
     ntrialsn=torch.ceil(torch.tensor(0.2*len(uniquecomb))) #keeps 20%
@@ -1744,6 +1895,7 @@ def chooselassoValid2IndGroup(Xtrain, Ytrain,Xvalid,Yvalid,myseed,ncomponents,nu
     lassopenalty_list=uniquecomb
 
   nlist=len(lassopenalty_list)
+  print('nlist',nlist)
   #print("lassopenalty_list",lassopenalty_list)
 
   if numbercores==0: #checks if ncores is empty, then uses half the number of CPU cores
@@ -1752,8 +1904,10 @@ def chooselassoValid2IndGroup(Xtrain, Ytrain,Xvalid,Yvalid,myseed,ncomponents,nu
     ncores=numbercores
 
   myparallel = Parallel(n_jobs=ncores,prefer="threads",verbose=100, pre_dispatch='1.5*n_jobs')(delayed(SparseIndGroupParallel)(kk,Xtrain, Ytrain,myseed, ncomponents,num_features,
-  hasGroupInfo,outcometype,kernel_param,mylambda, lassopenalty_list, myeta, groupsd,max_iter_nsir, max_iter_PG,
-  update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,Yvalid,Xvalid) for kk in range(nlist))
+      hasGroupInfo,outcometype,kernel_param,mylambda, lassopenalty_list, myeta, groupsd,max_iter_nsir, max_iter_PG,
+      update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,Yvalid,Xvalid,myomegaweight) for kk in range(nlist))
+
+      
 
   #obtain lambda corresponding to smallest error
   myout=torch.Tensor(myparallel)
@@ -1766,9 +1920,11 @@ def chooselassoValid2IndGroup(Xtrain, Ytrain,Xvalid,Yvalid,myseed,ncomponents,nu
   lassopenaltyd=lassopenalty_list[minK]
   print('optimal penalty',lassopenaltyd)
   grplassopenalty=lassopenaltyd
+
+  print('combining results from a fold')
   myalg=NSIRAlgorithmFISTASIndandGLasso(Xtrain, Ytrain, myseed, ncomponents,num_features, hasGroupInfo,groupsd,
   outcometype,kernel_param,mylambda, lassopenaltyd, myeta,max_iter_nsir,
-  max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X)
+  max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,myomegaweight)
 
 
   myrho_list=lassopenalty_list
@@ -1776,10 +1932,20 @@ def chooselassoValid2IndGroup(Xtrain, Ytrain,Xvalid,Yvalid,myseed,ncomponents,nu
   return myalg, myvalidMSEs,myrho_list,torch.squeeze(torch.Tensor(lassopenaltynum))
 
 
-
-def nsrf_cvindgrouplassoNew(Xtrain, Ytrain,myseed,ncomponents,num_features,hasGroupInfo,numbercores,
-outcometype,kernel_param,mylambda, myeta, rhoLower, rhoUpper,groupsd,gridmethod,nfolds,ngrid,max_iter_nsir,
-max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
+def nsrf_cvindgrouplassoNew(Xtrain, Ytrain,hasGroupInfo, groupsd=[], myseed=12345, myeta=[], rhoLower=[], rhoUpper=[],
+                                 ncomponents=0,num_features=[],outcometype='categorical',kernel_param=[],
+                                 mylambda=[], numbercores=10,
+                                 gridmethod='RandomSearch',nfolds=3,ngrid=8,max_iter_nsir=500, 
+                                 max_iter_PG=500, update_thresh_nsir=10**-6,update_thresh_PG=10**-6,
+                                 standardize_Y=False,standardize_X=True,myomegaweight=0.5):
+    
+#     Xtrain, Ytrain,hasGroupInfo, groupsd,grpweightsd, myseed=12345, myeta=[], myrhomin=[], myrhomax=[],
+#                                  ncomponents=0,num_features=[],outcometype='binray',kernel_param=[],
+#                                  mylambda=[], numbercores=10,
+#                                  gridmethod='RandomSearch',nfolds=3,ngrid=8,max_iter_nsir=500, 
+#                                  max_iter_PG=500, update_thresh_nsir=10**-6,update_thresh_PG=10**-6,
+#                                  standardize_Y=False,standardize_X=True,myomegaweight=0.5
+    
 
   torch.manual_seed(seed=myseed)
 
@@ -1808,13 +1974,13 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
       mycenter_Y[0]=torch.mean(Yold,dim=0)
       mystd_Y[0]=torch.std(Yold,dim=0)
       Y=torch.div(Yold-torch.mean(Yold,dim=0).repeat(n,1),torch.std(Yold,dim=0).repeat(n,1))
-    elif outcometype=='binary':
+    elif outcometype=='categorical':
       Y=Yold
   elif standardize_Y==False:
     if outcometype=='continuous':
       mycenter_Y[0]=torch.mean(Yold,dim=0)
       Y=Yold-torch.mean(Yold,dim=0)
-    elif outcometype=='binary':
+    elif outcometype=='categorical':
       Y=Yold
 
 
@@ -1828,28 +1994,7 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
       mystd_X[d]=mystd
 
 
-  # #estimate kernel parameter if empty
-  # if not kernel_param:
-  #    kernel_param=median_heuristicsbatch(Xdata)
-  #
-  # #set mylambda to 1 for all view if empty
-  # if not mylambda:
-  #    mylambda=[1]*M
-  #
-  # if not num_features:
-  #   n1=Yold.size(0)
-  #   print('n1 is', n1)
-  #   if n1>=1000:
-  #     num_features=int(300)
-  #   else:
-  #     num_features=int(torch.floor(torch.tensor(n1/2)))
-  #     print('num_features is', num_features)
-
-  # #estimate number of components if emtpy
-  # if ncomponents==0:
-  #   ncomponents=chooseK(Xdata, kernel_param,eigsplot=False, TopK=20, threshold = 0.1, verbose=True)
-  #   ncomponents=int(ncomponents)
-
+  
   #estimate kernel parameter if empty
   if not kernel_param:
      kernel_param=median_heuristicsbatch(Xtrain)
@@ -1872,6 +2017,8 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
   if not rhoUpper:
      rhoUpper=[0.00001]*M
 
+  if not myeta:
+     myeta=[0.5]*M
 
   if not num_features:
     n1=Ytrain.size(0)
@@ -1884,8 +2031,13 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
   if ncomponents==0:
     ncomponents=chooseK(Xtrain, kernel_param,eigsplot=False, TopK=20, threshold = 0.1, verbose=True)
     ncomponents=int(ncomponents)
+    #use this for r-1
+    #ncomponents=int(ncomponents)  -1
+#     #use this for r+1
+    #ncomponents=int(ncomponents)  +1
+    print('ncomponents is',ncomponents)
 
-  if outcometype=='binary':
+  if outcometype=='categorical':
     nc=len(torch.unique(Ytrain)) #number of unique classes
     Nn=torch.zeros(nc,1)
     foldid2=list(range(nc))
@@ -1898,8 +2050,6 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
       foldid3b=random.sample(torch.Tensor(foldid2b).tolist(),int(Nn[ii]))
       foldid2.append(torch.Tensor(foldid3b))
       foldid3=torch.cat(foldid2,dim=-1) #concatenates the given sequence along dimension -1 (makes them into vector)
-
-
   elif outcometype=='continuous':
     foldid=torch.Tensor.repeat(torch.arange(start=0,end=nfolds),math.floor(nrow/nfolds))
     foldid2=torch.cat([foldid, torch.arange(start=0,end=int(math.fmod(nrow,nfolds)))]).tolist() #converts the tensor to a list
@@ -1917,6 +2067,7 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
   myrhomin2=rhoLower
   myrhomax2=rhoUpper
   for r in range(nfolds):
+    print('Working on fold',r)
     myrhomin=myrhomin2
     myrhomax=myrhomax2
     Xtrainr=[Xtrain[d][foldid4!=r,:] for d in range(M)]
@@ -1926,7 +2077,7 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
 
     myKr=chooselassoValid2IndGroup(Xtrainr, Ytrainr,Xvalidr,Yvalidr,myseed,ncomponents,num_features,hasGroupInfo,numbercores,outcometype,
                            kernel_param,mylambda, myeta, myrhomin,myrhomax,groupsd,gridmethod,ngrid,max_iter_nsir,
-                           max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X)
+                           max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,myomegaweight)
 
 
     myresultd=torch.zeros(len(myKr[2]),M+3)
@@ -1943,19 +2094,28 @@ max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X):
     mymean[ll,0]=torch.mean(che[che[:,2]==ll2[ll],1])
     mymean[ll,1]=ll2[ll]
   [minError, lassoind]=torch.min(mymean[:,0:1],dim=0)
+
+  print('myKr[2]',myKr[2])
+  print('che',che)
+  print('mymean',mymean)
+  print('minError',minError)
+  print('lassoind',lassoind)
+  
   if gridmethod=='GridSearch':
     che4=torch.Tensor(myKr[2])
   elif gridmethod=='RandomSearch':
-    che4=torch.stack(myKr[2])
+    che4=torch.Tensor(myKr[2])
+    #che4=torch.stack(myKr[2])
 
   minlasso=che4[lassoind,:]
 
   lassopenaltyd=minlasso[0]
-
+  print('minlasso',minlasso)
+  print('che4',che4)
   # #use min lasso on training data
-  myalg=NSIRAlgorithmFISTASIndandGLasso(Xtrain, Ytrain,myseed, ncomponents,num_features, hasGroupInfo,
+  myalg=NSIRAlgorithmFISTASIndandGLasso(XOld, Yold,myseed, ncomponents,num_features, hasGroupInfo,
           groupsd,outcometype,kernel_param,mylambda, lassopenaltyd, myeta,max_iter_nsir,
-          max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X)
+          max_iter_PG, update_thresh_nsir,update_thresh_PG,standardize_Y,standardize_X,myomegaweight)
   return{
       'myalg':myalg,
       'Optimum.Rho':lassopenaltyd
